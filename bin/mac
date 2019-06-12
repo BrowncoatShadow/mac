@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+
+declare -A COMMAND
+
+command_help ()
+{
+    if [[ -z "${COMMAND[${1}]}" ]]; then
+        echo "[ERROR] Unknown command: ${1}"
+        exit 1
+    fi
+
+    declare -A cmd="${COMMAND[${1}]}"
+    printf "mac %s %s\n\t%s\n\n" "${1}" "${cmd[usage]}" "${cmd[description]}"
+}
+
+# Show description of command: <command>
+COMMAND[help]='(
+    [description]="List details about available commands"
+    [usage]="[<command> | commands]"
+)'
+mac::help ()
+{
+    local cmd
+
+    if [[ -n "${1}" ]]; then
+        if [[ "${1}" == "commands" ]]; then
+          for cmd in "${!COMMAND[@]}"; do
+              echo "${cmd}"
+          done
+        else
+            command_help "${1}"
+        fi
+    else
+        for cmd in "${!COMMAND[@]}"; do
+            command_help "${cmd}"
+        done | ${PAGER:-less}
+    fi
+}
+
+COMMAND[volume]='(
+    [description]="Get or set volume level"
+    [usage]="[0-100]"
+)'
+mac::volume ()
+{
+    if [[ -n "${1}" ]]; then
+        osascript -e "set volume output volume ${1}"
+    else
+        osascript -e 'output volume of (get volume settings)'
+    fi
+}
+
+COMMAND[mute]='(
+    [description]="Get or set volume mute"
+    [usage]="[true | false]"
+)'
+mac::mute ()
+{
+    if [[ -n "${1}" ]]; then
+        osascript -e "set volume output muted ${1}"
+    else
+        osascript -e 'output muted of (get volume settings)'
+    fi
+}
+
+COMMAND[wifi]='(
+    [description]="Get or set wifi state"
+    [usage]="[on |off]"
+)'
+mac::wifi ()
+{
+  local device="$(networksetup -listallhardwareports |
+                  grep -A 2 'Hardware Port: Wi-Fi' |
+                  grep 'Device:' |
+                  awk '{print $2}')"
+
+  if [[ ${1} =~ (on|off) ]]; then
+      networksetup -setairportpower "${device}" "${1}"
+  else
+      networksetup -getairportpower "${device}"
+  fi
+}
+
+COMMAND[eject]='(
+    [description]="Eject all eject-able volumes"
+)'
+mac::eject ()
+{ 
+    osascript -e 'tell application "Finder" to eject (every disk whose ejectable is true)'
+}
+
+COMMAND[sleep]='(
+    [description]="Put the display to sleep"
+)'
+mac::sleep ()
+{
+    pmset displaysleepnow
+}
+
+COMMAND[lock]='(
+    [description]="Lock the current user session"
+)'
+mac::lock ()
+{
+    "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession" -suspend
+}
+
+COMMAND[clean-finder]='(
+    [description]="Recursively delete all DS_Store files"
+)'
+mac::clean-finder ()
+{
+    find . -type f -name '*.DS_Store' -ls -delete
+}
+
+COMMAND[empty-trash]='(
+    [description]="Lock the current user session"
+)'
+mac::empty-trash ()
+{
+    sudo rm -rfv /Volumes/*/.Trashes
+    sudo rm -rfv ~/.Trash
+}
+
+COMMAND[desktop]='(
+    [description]="Get or set visability of desktop icons"
+    [usage]="[show | hide]"
+)'
+mac::desktop ()
+{
+    local value
+    if [[ -n "${1}" ]]; then
+        case "${1}" in
+            show) value="true" ;;
+            hide) value="false" ;;
+        esac
+        defaults write com.apple.finder CreateDesktop -bool "${value}" && killall Finder
+    else
+        case "$(defaults read com.apple.finder CreateDesktop -bool)" in
+            0) echo "hidden" ;;
+            1) echo "shown" ;;
+        esac
+    fi
+}
+
+COMMAND[hidden]='(
+    [description]="Get or set visability of hidden items in Finder"
+    [usage]="[show | hide]"
+)'
+mac::hidden ()
+{
+    local value
+    if [[ -n "${1}" ]]; then
+        case "${1}" in
+            show) value="true" ;;
+            hide) value="false" ;;
+        esac
+        defaults write com.apple.finder AppleShowAllFiles -bool "${value}" && killall Finder
+    else
+        case "$(defaults read com.apple.finder AppleShowAllFiles -bool)" in
+            0) echo "hidden" ;;
+            1) echo "shown" ;;
+        esac
+    fi
+}
+
+COMMAND[quicklook]='(
+    [description]="Open files with Quicklook Preview"
+    [usage]="<files...>"
+)'
+mac::quicklook ()
+{
+    (( $# > 0 )) && qlmanage -p $* &>/dev/null &
+}
+
+COMMAND[finder-path]='(
+    [description]="Print the directory path of the forefront Finder window"
+)'
+mac::finder-path ()
+{
+    osascript -e 'tell app "Finder" to POSIX path of (insertion location as alias)'
+}
+
+COMMAND[wallpaper]='(
+    [description]="Set the wallpaper on all displays and spaces"
+    [usage]="<file>"
+)'
+mac::wallpaper ()
+{
+    local file="$(cd "$(dirname "${1}")"; pwd)/$(basename "${1}")"
+
+    if [[ ! -f "${file}" ]]; then
+        echo "[ERROR] Not a file: ${file}"
+        return 1
+    elif ! file "${file}" | grep -q -e image -e bitmap; then
+        echo "[ERROR] Not an image: ${file}"
+        return 1
+    else
+        sqlite3 "${HOME}/Library/Application Support/Dock/desktoppicture.db" \
+            "update data set value = '${file}'" &&
+            killall Dock
+    fi
+}
+
+# Main Process
+main ()
+{
+    if [[ ! "${OSTYPE}" =~ darwin* ]]; then
+        echo "mac commands only work on macs..."
+        exit 1
+    fi
+
+    if [[ -z "${1}" ]]; then
+        mac::help
+        exit 0
+    fi
+
+    # Test if mac command is valid, then execute it with arguments
+    if [[ -n "${COMMAND[${1}]}" ]]; then
+        mac_command="mac::${1}"
+        shift
+        "${mac_command}" "${@}"
+    else
+        echo "[ERROR] Command not found: ${1}"
+        exit 1
+    fi
+}
+main "${@}"
