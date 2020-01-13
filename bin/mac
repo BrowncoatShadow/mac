@@ -81,6 +81,33 @@ mac::wifi ()
   fi
 }
 
+COMMAND[tunnel]='(
+    [description]="Enable or disable local socks proxy on all network adapters"
+    [usage]="[on |off]"
+)'
+mac::tunnel ()
+{
+  # Get a list of all network services for physical network cards.
+  readarray -t services < <(networksetup -listnetworkserviceorder |
+                            grep 'Device: en[0-9]\+)$' -B 1 |
+                            grep '^([0-9]\+)' |
+                            sed 's/^([0-9]*) //')
+
+  if [[ ${1} =~ (on|off) ]]; then
+    if [[ "${1}" == "on" ]]; then
+        for service in "${services[@]}"; do
+            networksetup -setsocksfirewallproxy "${service}" 127.0.0.1 1080
+        done
+    elif [[ "${1}" == "off" ]]; then
+        for service in "${services[@]}"; do
+            networksetup -setsocksfirewallproxystate "${service}" off
+        done
+    fi
+  else
+      networksetup -getsocksfirewallproxy "${services[0]}" | grep -q "Enabled: Yes" && echo "on" || echo "off"
+  fi
+}
+
 COMMAND[eject]='(
     [description]="Eject all eject-able volumes"
 )'
